@@ -40,7 +40,32 @@ namespace IEBrowser
                 }
             };
 
-            Application.Run(new MainForm(ResolveInitialUrl(args)));
+            StartupInfo startup = BuildStartup(args);
+            Application.Run(new MainForm(startup.InitialUrl, startup.RestoreSession));
+        }
+
+        /// <summary>
+        /// 计算启动时的初始地址与是否恢复会话：
+        ///   1. 命令行带有显式地址 → 只打开该地址，不恢复会话；
+        ///   2. --restart 标记（内核切换自动重启）→ 恢复上次会话；
+        ///   3. 其余情况 → 恢复上次会话，无会话则空白启动。
+        /// </summary>
+        private static StartupInfo BuildStartup(string[] args)
+        {
+            string url = ResolveInitialUrl(args);
+            if (!string.IsNullOrEmpty(url))
+            {
+                return new StartupInfo { InitialUrl = url, RestoreSession = false };
+            }
+
+            bool restart = SessionStore.ConsumeRestartFlag();
+            return new StartupInfo { InitialUrl = null, RestoreSession = true };
+        }
+
+        private sealed class StartupInfo
+        {
+            public string InitialUrl { get; set; }
+            public bool RestoreSession { get; set; }
         }
 
         /// <summary>

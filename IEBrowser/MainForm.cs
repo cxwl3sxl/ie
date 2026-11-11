@@ -55,14 +55,15 @@ namespace IEBrowser
         private Icon _smallIcon;
         private Icon _largeIcon;
 
-        public MainForm() : this(null)
+        public MainForm() : this(null, false)
         {
         }
 
         /// <summary>
-        /// 支持从命令行携带初始地址启动（浏览器命令行参数 / 文件关联）。
+        /// 支持从命令行携带初始地址启动（浏览器命令行参数 / 文件关联），
+        /// 以及从上次会话恢复标签页（正常启动或内核切换自动重启）。
         /// </summary>
-        public MainForm(string initialUrl)
+        public MainForm(string initialUrl, bool restoreSession)
         {
             _favorites.Load();
             _settings.Load();
@@ -80,7 +81,45 @@ namespace IEBrowser
             _statusTimer.Interval = 2600;
             _statusTimer.Tick += StatusTimerTick;
 
-            OpenNewTab(string.IsNullOrEmpty(initialUrl) ? _homeUrl : initialUrl);
+            if (!string.IsNullOrEmpty(initialUrl))
+            {
+                OpenNewTab(initialUrl);
+            }
+            else
+            {
+                bool restored = false;
+                if (restoreSession)
+                {
+                    SessionData session = SessionStore.Load();
+                    if (session != null)
+                    {
+                        foreach (string url in session.Urls)
+                        {
+                            OpenNewTab(url);
+                        }
+                        if (session.ActiveIndex >= 0 && session.ActiveIndex < _tabs.Count)
+                        {
+                            ActivateTab(session.ActiveIndex);
+                        }
+                        restored = true;
+                    }
+                }
+
+                if (!restored) OpenNewTab(_homeUrl);
+            }
+        }
+
+        /// <summary>收集当前所有标签页地址与活动索引，供会话保存。</summary>
+        private SessionData CollectSession()
+        {
+            var urls = new List<string>();
+            foreach (BrowserTab tab in _tabs)
+            {
+                string url = tab.Url;
+                if (string.IsNullOrEmpty(url)) url = _homeUrl;
+                urls.Add(url);
+            }
+            return new SessionData { Urls = urls.ToArray(), ActiveIndex = _activeIndex };
         }
 
         private BrowserTab ActiveTab
@@ -810,9 +849,15 @@ namespace IEBrowser
                 item.Text = (ActiveXPolicy.IeVersion == v ? "✓ " : "○ ") + "IE" + v + " 内核";
                 item.Click += delegate
                 {
+                    if (ActiveXPolicy.IeVersion == v)
+                    {
+                        SetStatus("当前已是 IE" + v + " 内核");
+                        return;
+                    }
+
                     ActiveXPolicy.IeVersion = v;
                     SaveSettings();
-                    SetStatus("IE 内核已切换为 IE" + v + "，重启程序后生效");
+                    RestartWithNewKernel(v);
                 };
                 kernelMenu.DropDownItems.Add(item);
             }
@@ -992,12 +1037,60 @@ namespace IEBrowser
         private void OnFormClosing(object sender, FormClosingEventArgs e)
         {
             SaveSettings();
+            SessionStore.Save(CollectSession().Urls, CollectSession().ActiveIndex);
 
             foreach (BrowserTab tab in _tabs.ToArray())
             {
                 tab.Dispose();
             }
             _tabs.Clear();
+        }
+
+        /// <summary>
+        /// 内核切换后询问是否重启；确认则保存会话、打重启标记并自动重启，
+        /// 重启后恢复当前所有标签页与活动标签。
+        /// </summary>
+        private void RestartWithNewKernel(int version)
+        {
+            DialogResult choice = MessageBox.Show(
+                this,
+                "IE 内核已切换为 IE" + version + "，需要重启程序才能生效。\n\n是否立即重启？重启后将恢复当前所有标签页。",
+                "IE 浏览器",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Question,
+                MessageBoxDefaultButton.Button1);
+
+            if (choice != DialogResult.Yes)
+            {
+                SetStatus("已切换为 IE" + version + " 内核，下次启动程序时生效");
+                return;
+            }
+
+            // 会话随 OnFormClosing 保存；这里只打重启标记，让下次启动恢复会话
+            SessionStore.MarkRestart();
+
+            try
+            {
+                string exe = Application.ExecutablePath;
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = exe,
+                    Arguments = "--restart",
+                    UseShellExecute = false
+                });
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this,
+                    "无法自动重启：" + ex.Message + "\n\n请手动重新启动程序。",
+                    "IE 浏览器",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+                return;
+            }
+
+            // 关闭当前实例（触发 OnFormClosing 保存会话）
+            Close();
         }
     }
 }
