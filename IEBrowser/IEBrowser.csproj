@@ -134,5 +134,12 @@
   <Target Name="DisableNxCompat" AfterTargets="Build" Condition="Exists('$(TargetPath)')">
     <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\..\tools\disable-nxcompat.ps1&quot; -Path &quot;$(TargetPath)&quot;" ContinueOnError="true" />
   </Target>
+  <Target Name="CopyIconImages" AfterTargets="Build" Condition="Exists('$(MSBuildProjectDirectory)\..\images')">
+    <ItemGroup>
+      <IconImages Include="$(MSBuildProjectDirectory)\..\images\*.png" />
+    </ItemGroup>
+    <MakeDir Directories="$(TargetDir)images" />
+    <Copy SourceFiles="@(IconImages)" DestinationFolder="$(TargetDir)images" SkipUnchangedFiles="true" />
+  </Target>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>

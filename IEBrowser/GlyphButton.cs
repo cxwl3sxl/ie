@@ -1,5 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.Drawing;
+using System.IO;
+using System.Reflection;
 using System.Windows.Forms;
 
 namespace IEBrowser
@@ -18,9 +21,35 @@ namespace IEBrowser
 
     /// <summary>
     /// 轻量扁平图标按钮。
+    /// 图标来源：优先加载 exe 旁 images\ 目录下的 PNG 图像（按图标名映射），
+    /// 未找到或加载失败时回退到内置字体字形绘制。
     /// </summary>
     internal sealed class GlyphButton : Control
     {
+        // PNG 文件名（不含扩展名），按 GlyphIcon 枚举映射
+        private static readonly Dictionary<GlyphIcon, string> IconFileNames = new Dictionary<GlyphIcon, string>
+        {
+            { GlyphIcon.Back, "后退" },
+            { GlyphIcon.Forward, "前进" },
+            { GlyphIcon.Refresh, "刷新" },
+            { GlyphIcon.Stop, "刷新" },          // 加载中暂用刷新图；后续可提供独立的"停止"图
+            { GlyphIcon.Home, "主页" },
+            { GlyphIcon.Star, "收藏" },
+            { GlyphIcon.StarFilled, "已收藏" },
+            { GlyphIcon.Menu, "菜单" }
+        };
+
+        // GlyphIcon → 禁用态 PNG 文件名（仅 Back/Forward 提供）
+        private static readonly Dictionary<GlyphIcon, string> DisabledFileNames = new Dictionary<GlyphIcon, string>
+        {
+            { GlyphIcon.Back, "后退-禁用" },
+            { GlyphIcon.Forward, "前进-禁用" }
+        };
+
+        private static readonly Dictionary<string, Image> _imageCache = new Dictionary<string, Image>();
+        private static bool _imageDirProbed;
+        private static string _imageDir;
+
         private GlyphIcon _icon;
         private bool _hover;
         private bool _pressed;
@@ -50,6 +79,69 @@ namespace IEBrowser
             }
         }
 
+        /// <summary>
+        /// 定位图像目录：优先 exe 同目录的 images\，其次源码 images\（便于开发调试）。
+        /// </summary>
+        private static string ImageDir
+        {
+            get
+            {
+                if (!_imageDirProbed)
+                {
+                    _imageDirProbed = true;
+                    try
+                    {
+                        string exeDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
+                        if (!string.IsNullOrEmpty(exeDir))
+                        {
+                            string candidate = Path.Combine(exeDir, "images");
+                            if (Directory.Exists(candidate)) _imageDir = candidate;
+                        }
+                        if (_imageDir == null)
+                        {
+                            // 开发调试回退：源码同级 images 目录
+                            string candidate2 = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "images");
+                            if (Directory.Exists(candidate2)) _imageDir = candidate2;
+                        }
+                    }
+                    catch { }
+                }
+                return _imageDir;
+            }
+        }
+
+        private static Image LoadIconImage(GlyphIcon icon, bool disabled)
+        {
+            string dir = ImageDir;
+            if (string.IsNullOrEmpty(dir)) return null;
+
+            string name;
+            if (disabled && DisabledFileNames.TryGetValue(icon, out name)) { }
+            else if (!IconFileNames.TryGetValue(icon, out name)) return null;
+
+            string path = Path.Combine(dir, name + ".png");
+            Image img;
+            lock (_imageCache)
+            {
+                if (_imageCache.TryGetValue(path, out img)) return img;
+            }
+            try
+            {
+                if (File.Exists(path))
+                {
+                    // 从文件加载独立副本，避免文件句柄长期占用
+                    using (var tmp = new Bitmap(path))
+                    {
+                        img = new Bitmap(tmp);
+                    }
+                    lock (_imageCache) _imageCache[path] = img;
+                    return img;
+                }
+            }
+            catch { }
+            return null;
+        }
+
         protected override void OnPaint(PaintEventArgs e)
         {
             Graphics g = e.Graphics;
@@ -66,6 +158,19 @@ namespace IEBrowser
                 Ui.FillRounded(g, r, Ui.Hover, Ui.Px(7));
             }
 
+            Image img = LoadIconImage(_icon, !Enabled);
+            if (img != null)
+            {
+                // 等比缩放居中绘制，占按钮约 60%
+                int target = Math.Min(Width, Height) * 3 / 5;
+                int w = img.Width >= img.Height ? target : target * img.Width / img.Height;
+                int h = img.Width >= img.Height ? target * img.Height / img.Width : target;
+                g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                g.DrawImage(img, (Width - w) / 2, (Height - h) / 2, w, h);
+                return;
+            }
+
+            // 回退：字体字形绘制
             Color color = Enabled ? Ui.IconColor : Ui.IconDisabled;
             string glyph;
             Font font;
