@@ -9,12 +9,11 @@ namespace IEBrowser
         private static void Main(string[] args)
         {
             // Feature control 写注册表以 exe 文件名为键，必须在任何浏览器控件
-            // 创建之前、且基于持久化设置（含旧版 ActiveX 兼容模式）执行。
+            // 创建之前、且基于持久化设置（含用户选择的 IE 内核版本）执行。
             var settings = new AppSettings();
             settings.Load();
 
-            ActiveXPolicy.CompatibilityMode = settings.CompatibilityMode;
-            ActiveXPolicy.AutoIsolateActiveX = settings.AutoIsolateActiveX;
+            ActiveXPolicy.IeVersion = settings.IeVersion;
             BrowserFeatureControl.Apply();
 
             Application.EnableVisualStyles();

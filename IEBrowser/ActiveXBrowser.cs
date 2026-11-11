@@ -23,21 +23,11 @@ namespace IEBrowser
         public static bool UseCustomSecurityManager = true;
 
         /// <summary>
-        /// ActiveX 兼容模式：针对 griectl 等旧版（~2008 年代）ActiveX 控件，
-        /// 将内核降回 IE7、关闭 GPU 合成并去除窗口主题，避免控件在 CreateWindowExW
-        /// /窗口回调中因主题或新内核不兼容而触发本机访问违规（c000041d）。
-        /// 默认开启：dump 已证实内网 griectl 控件在该模式下才稳定。
+        /// 渲染内核版本（7/8/9/10/11），对应 FEATURE_BROWSER_EMULATION。
+        /// 由菜单“IE 内核”切换，写入 settings.ini 的 ie_version 键，重启后生效。
+        /// 注意：WebBrowser 控件无法模拟比本机安装的 IE 更高的版本。
         /// </summary>
-        /// 默认关闭：已确认崩溃根因是本机 griectl 版本（5.5.11.518）与页面要求（5.6.11.1118）
-        /// 不匹配导致的替换安装崩溃；升级控件后无需降级内核。
-        /// </summary>
-        public static bool CompatibilityMode = false;
-
-        /// <summary>
-        /// 自动隔离：命中已知会崩溃的旧版 ActiveX 页面时，不内置渲染，
-        /// 改用独立 32 位 iexplore.exe 打开。默认关闭（控件已升级，可正常内嵌）。
-        /// </summary>
-        public static bool AutoIsolateActiveX = false;
+        public static int IeVersion = 11;
     }
 
     /// <summary>
@@ -63,29 +53,6 @@ namespace IEBrowser
 
         public ActiveXBrowser()
         {
-            if (ActiveXPolicy.CompatibilityMode)
-            {
-                // 旧版 OCX 兼容：窗口创建后去除自身及 OCX 子窗口的主题，
-                // 避免老控件在主题化的窗口回调中触发访问违规。
-                HandleCreated += delegate
-                {
-                    BeginInvoke((Action)delegate
-                    {
-                        ActiveXCompatibility.StripThemeRecursive(Handle);
-                    });
-                };
-
-                DocumentCompleted += delegate
-                {
-                    try
-                    {
-                        ActiveXCompatibility.StripThemeRecursive(Handle);
-                    }
-                    catch
-                    {
-                    }
-                };
-            }
         }
 
         protected override WebBrowserSiteBase CreateWebBrowserSiteBase()

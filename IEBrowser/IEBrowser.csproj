@@ -92,8 +92,6 @@
       <SubType>Component</SubType>
     </Compile>
     <Compile Include="ActiveXBrowser.cs" />
-    <Compile Include="ActiveXCompatibility.cs" />
-    <Compile Include="ActiveXIsolation.cs" />
     <Compile Include="AppSettings.cs" />
     <Compile Include="BrowserFeatureControl.cs" />
     <Compile Include="BrowserTab.cs" />
