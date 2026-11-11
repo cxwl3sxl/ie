@@ -43,7 +43,13 @@ namespace IEBrowser
             }
         }
 
-        public static void Apply()
+        /// <summary>
+        /// compatibility 为 true 时启用旧版 ActiveX 兼容模式：
+        /// 内核降回 IE7（7000/7001）、关闭 GPU 合成渲染。
+        /// griectl 等老 OCX 在 IE11 模式 + GPU 渲染下会在 CreateWindowExW
+        /// /窗口回调里触发本机访问违规（c000041d）。
+        /// </summary>
+        public static void Apply(bool compatibility)
         {
             string exeName;
             try
@@ -57,16 +63,26 @@ namespace IEBrowser
 
             int major = IeMajorVersion;
             int emulation;
-            if (major >= 11) emulation = 11001;       // IE11 强制标准模式
+            if (compatibility)
+            {
+                // IE7 兼容：老 OCX 的目标宿主即 IE7
+                emulation = major >= 8 ? 7001 : 7000;
+            }
+            else if (major >= 11) emulation = 11001;  // IE11 强制标准模式
             else if (major == 10) emulation = 10001;
             else if (major == 9) emulation = 9000;
             else if (major == 8) emulation = 8000;
             else emulation = 7000;
 
             WriteDword("FEATURE_BROWSER_EMULATION", exeName, emulation);
-            WriteDword("FEATURE_GPU_RENDERING", exeName, 1);
+            WriteDword("FEATURE_GPU_RENDERING", exeName, compatibility ? 0 : 1);
             WriteDword("FEATURE_DISABLE_NAVIGATION_SOUNDS", exeName, 1);
             WriteDword("FEATURE_LOCALMACHINE_LOCKDOWN", exeName, 0);
+        }
+
+        public static void Apply()
+        {
+            Apply(ActiveXPolicy.CompatibilityMode);
         }
 
         private static void WriteDword(string feature, string exeName, int value)

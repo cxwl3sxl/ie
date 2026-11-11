@@ -15,6 +15,29 @@ namespace IEBrowser
 
         /// <summary>把上述放行规则同时应用到 Internet 区域，风险很高，默认关闭。</summary>
         public static bool AllowOnInternet = false;
+
+        /// <summary>
+        /// 是否向 WebBrowser 注入自定义 IInternetSecurityManager 站点。默认开启。
+        /// 设为 false 时回退到 IE 默认安全站点，用于排查自定义站点引发的本机崩溃。
+        /// </summary>
+        public static bool UseCustomSecurityManager = true;
+
+        /// <summary>
+        /// ActiveX 兼容模式：针对 griectl 等旧版（~2008 年代）ActiveX 控件，
+        /// 将内核降回 IE7、关闭 GPU 合成并去除窗口主题，避免控件在 CreateWindowExW
+        /// /窗口回调中因主题或新内核不兼容而触发本机访问违规（c000041d）。
+        /// 默认开启：dump 已证实内网 griectl 控件在该模式下才稳定。
+        /// </summary>
+        /// 默认关闭：已确认崩溃根因是本机 griectl 版本（5.5.11.518）与页面要求（5.6.11.1118）
+        /// 不匹配导致的替换安装崩溃；升级控件后无需降级内核。
+        /// </summary>
+        public static bool CompatibilityMode = false;
+
+        /// <summary>
+        /// 自动隔离：命中已知会崩溃的旧版 ActiveX 页面时，不内置渲染，
+        /// 改用独立 32 位 iexplore.exe 打开。默认关闭（控件已升级，可正常内嵌）。
+        /// </summary>
+        public static bool AutoIsolateActiveX = false;
     }
 
     /// <summary>
@@ -38,9 +61,43 @@ namespace IEBrowser
         private const int SOk = 0;
         private const int InetEDefaultAction = unchecked((int)0x800C0011);
 
+        public ActiveXBrowser()
+        {
+            if (ActiveXPolicy.CompatibilityMode)
+            {
+                // 旧版 OCX 兼容：窗口创建后去除自身及 OCX 子窗口的主题，
+                // 避免老控件在主题化的窗口回调中触发访问违规。
+                HandleCreated += delegate
+                {
+                    BeginInvoke((Action)delegate
+                    {
+                        ActiveXCompatibility.StripThemeRecursive(Handle);
+                    });
+                };
+
+                DocumentCompleted += delegate
+                {
+                    try
+                    {
+                        ActiveXCompatibility.StripThemeRecursive(Handle);
+                    }
+                    catch
+                    {
+                    }
+                };
+            }
+        }
+
         protected override WebBrowserSiteBase CreateWebBrowserSiteBase()
         {
-            return new SecuritySite(this);
+            if (ActiveXPolicy.UseCustomSecurityManager)
+            {
+                return new SecuritySite(this);
+            }
+
+            // 排查用：注入自定义安全站点时若发生本机崩溃（c0000005），
+            // 将本开关置 false 可回退到 IE 默认站点以确认是否为站点引发。
+            return base.CreateWebBrowserSiteBase();
         }
 
         /// <summary>
@@ -142,12 +199,14 @@ namespace IEBrowser
                 ppvObject = IntPtr.Zero;
                 try
                 {
-                    // 站点只需提供 IInternetSecurityManager。本机控件/mshtml 查询安全管理器时，
-                    // riid 可能是 IID_IUnknown / IID_IServiceProvider / IID_IInternetSecurityManager，
-                    // 只要 guidService 问的是安全管理器就返回我们的接口；否则调用方拿到 NULL
-                    // 后会解引用空接口指针，引发 AccessViolation 级崩溃（程序无提示退出）。
+                    // IInternetSecurityManager 的 service GUID 与其接口 IID 相同。
+                    // QueryService 语义：guidService 指定服务、riid 指定想要的接口，
+                    // 两者都必须匹配安全管理器，否则返回 INET_E_DEFAULT_ACTION，
+                    // 让本机 IE 走默认处理。若放宽到只判断 guidService，会在调用方
+                    // 实际想要其它接口时把安全管理器 vtable 交出去，造成 vtable 错配
+                    // 与访问违规（c0000005）级崩溃。
                     Guid securityManager = typeof(IInternetSecurityManager).GUID;
-                    if (guidService == securityManager)
+                    if (guidService == securityManager && riid == securityManager)
                     {
                         ppvObject = Marshal.GetComInterfaceForObject(this, typeof(IInternetSecurityManager));
                         return SOk;

@@ -2,3 +2,8 @@
 /.vs
 bin
 obj
+_cabwork
+_cabwork_backup
+analyze.txt
+analyze_out.txt
+debug.log

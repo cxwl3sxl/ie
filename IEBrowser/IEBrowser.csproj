@@ -39,6 +39,46 @@
     <WarningLevel>4</WarningLevel>
     <PlatformTarget>x86</PlatformTarget>
   </PropertyGroup>
+  <!-- 显式 32 位 -->
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|x86' ">
+    <DebugSymbols>true</DebugSymbols>
+    <DebugType>full</DebugType>
+    <Optimize>false</Optimize>
+    <OutputPath>bin\x86\</OutputPath>
+    <DefineConstants>DEBUG;TRACE;X86</DefineConstants>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>4</WarningLevel>
+    <PlatformTarget>x86</PlatformTarget>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|x86' ">
+    <DebugType>pdbonly</DebugType>
+    <Optimize>true</Optimize>
+    <OutputPath>bin\x86\</OutputPath>
+    <DefineConstants>TRACE;X86</DefineConstants>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>4</WarningLevel>
+    <PlatformTarget>x86</PlatformTarget>
+  </PropertyGroup>
+  <!-- 显式 64 位 -->
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|x64' ">
+    <DebugSymbols>true</DebugSymbols>
+    <DebugType>full</DebugType>
+    <Optimize>false</Optimize>
+    <OutputPath>bin\x64\</OutputPath>
+    <DefineConstants>DEBUG;TRACE;X64</DefineConstants>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>4</WarningLevel>
+    <PlatformTarget>x64</PlatformTarget>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|x64' ">
+    <DebugType>pdbonly</DebugType>
+    <Optimize>true</Optimize>
+    <OutputPath>bin\x64\</OutputPath>
+    <DefineConstants>TRACE;X64</DefineConstants>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>4</WarningLevel>
+    <PlatformTarget>x64</PlatformTarget>
+  </PropertyGroup>
   <ItemGroup>
     <Reference Include="System" />
     <Reference Include="System.Core" />
@@ -48,20 +88,32 @@
     <Reference Include="System.Xml.Linq" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="AddressBar.cs" />
+    <Compile Include="AddressBar.cs">
+      <SubType>Component</SubType>
+    </Compile>
     <Compile Include="ActiveXBrowser.cs" />
+    <Compile Include="ActiveXCompatibility.cs" />
+    <Compile Include="ActiveXIsolation.cs" />
     <Compile Include="AppSettings.cs" />
     <Compile Include="BrowserFeatureControl.cs" />
     <Compile Include="BrowserTab.cs" />
     <Compile Include="ComInterop.cs" />
     <Compile Include="FavoritesStore.cs" />
-    <Compile Include="GlyphButton.cs" />
-    <Compile Include="LayoutControls.cs" />
-    <Compile Include="MainForm.cs" />
+    <Compile Include="GlyphButton.cs">
+      <SubType>Component</SubType>
+    </Compile>
+    <Compile Include="LayoutControls.cs">
+      <SubType>Component</SubType>
+    </Compile>
+    <Compile Include="MainForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="StartPage.cs" />
-    <Compile Include="TabStrip.cs" />
+    <Compile Include="TabStrip.cs">
+      <SubType>Component</SubType>
+    </Compile>
     <Compile Include="Ui.cs" />
   </ItemGroup>
   <ItemGroup>
@@ -70,5 +122,18 @@
     </EmbeddedResource>
     <None Include="app.manifest" />
   </ItemGroup>
+  <!--
+    必须关闭 NXCOMPAT（DEP）。
+    原因：Cognos GRID 报表控件 griectl.dll（CLSID 9E4CCA44-17FC-402B-822C-BFA6CBA77C0C）
+    在运行时把一段机器码写进普通读写内存（PAGE_READWRITE / MEM_PRIVATE）后直接跳转执行，
+    即老式"动态 thunk"。进程启用 DEP 时该页不可执行，跳转即触发 c0000005 访问冲突，
+    崩溃点固定在 griectl 的窗口回调里（user32!KiUserCallbackDispatcher 链路）。
+
+    32 位 IE 本身 DllCharacteristics=0xC040（无 NXCOMPAT）所以控件在 IE 里正常，
+    本程序如果带 NXCOMPAT 就会崩。因此这里显式清除该位，与 32 位 IE 保持一致。
+  -->
+  <Target Name="DisableNxCompat" AfterTargets="Build" Condition="Exists('$(TargetPath)')">
+    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\..\tools\disable-nxcompat.ps1&quot; -Path &quot;$(TargetPath)&quot;" ContinueOnError="true" />
+  </Target>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>

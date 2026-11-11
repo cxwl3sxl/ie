@@ -32,10 +32,22 @@ namespace IEBrowser
         /// <summary>在 Internet 区域也应用上述规则（高风险，默认关闭）。</summary>
         public bool AllowOnInternet { get; set; }
 
+        /// <summary>注入自定义 IInternetSecurityManager 站点（排查用，默认开启）。</summary>
+        public bool UseCustomSecurityManager { get; set; }
+
+        /// <summary>旧版 ActiveX 兼容模式（IE7 内核 + 关 GPU + 去主题，默认关闭）。</summary>
+        public bool CompatibilityMode { get; set; }
+
+        /// <summary>自动隔离含旧版 ActiveX 的页面（用独立 IE 打开），默认开启。</summary>
+        public bool AutoIsolateActiveX { get; set; }
+
         public AppSettings()
         {
             AllowActiveX = true;
             AllowOnInternet = false;
+            UseCustomSecurityManager = true;
+            CompatibilityMode = false;
+            AutoIsolateActiveX = false;
         }
 
         public void Load()
@@ -78,6 +90,18 @@ namespace IEBrowser
                     {
                         AllowOnInternet = value == "1";
                     }
+                    else if (key == "use_custom_security")
+                    {
+                        UseCustomSecurityManager = value == "1";
+                    }
+                    else if (key == "compat_mode")
+                    {
+                        CompatibilityMode = value == "1";
+                    }
+                    else if (key == "auto_isolate_activex")
+                    {
+                        AutoIsolateActiveX = value == "1";
+                    }
                 }
             }
             catch
@@ -95,7 +119,10 @@ namespace IEBrowser
                     Environment.NewLine +
                     "maximized=" + (maximized ? "1" : "0") + Environment.NewLine +
                     "activex=" + (AllowActiveX ? "1" : "0") + Environment.NewLine +
-                    "activex_internet=" + (AllowOnInternet ? "1" : "0") + Environment.NewLine;
+                    "activex_internet=" + (AllowOnInternet ? "1" : "0") + Environment.NewLine +
+                    "use_custom_security=" + (UseCustomSecurityManager ? "1" : "0") + Environment.NewLine +
+                    "compat_mode=" + (CompatibilityMode ? "1" : "0") + Environment.NewLine +
+                    "auto_isolate_activex=" + (AutoIsolateActiveX ? "1" : "0") + Environment.NewLine;
                 File.WriteAllText(FilePath, content);
             }
             catch

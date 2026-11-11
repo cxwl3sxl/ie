@@ -55,7 +55,14 @@ namespace IEBrowser
         private Icon _smallIcon;
         private Icon _largeIcon;
 
-        public MainForm()
+        public MainForm() : this(null)
+        {
+        }
+
+        /// <summary>
+        /// 支持从命令行携带初始地址启动（浏览器命令行参数 / 文件关联）。
+        /// </summary>
+        public MainForm(string initialUrl)
         {
             _favorites.Load();
             _settings.Load();
@@ -63,6 +70,8 @@ namespace IEBrowser
             // 在任何浏览器控件创建之前应用 ActiveX 放行策略
             ActiveXPolicy.AllowActiveX = _settings.AllowActiveX;
             ActiveXPolicy.AllowOnInternet = _settings.AllowOnInternet;
+            ActiveXPolicy.UseCustomSecurityManager = _settings.UseCustomSecurityManager;
+            ActiveXPolicy.AutoIsolateActiveX = _settings.AutoIsolateActiveX;
             _homeUrl = StartPage.Create();
 
             InitializeUi();
@@ -71,7 +80,7 @@ namespace IEBrowser
             _statusTimer.Interval = 2600;
             _statusTimer.Tick += StatusTimerTick;
 
-            OpenNewTab(_homeUrl);
+            OpenNewTab(string.IsNullOrEmpty(initialUrl) ? _homeUrl : initialUrl);
         }
 
         private BrowserTab ActiveTab
@@ -118,7 +127,9 @@ namespace IEBrowser
             _statusBar.Dock = DockStyle.Fill;
             _statusBar.Margin = Padding.Empty;
             _statusBar.LeftText = "就绪";
-            _statusBar.RightText = "IE" + BrowserFeatureControl.IeMajorVersion + " 内核";
+            _statusBar.RightText = ActiveXPolicy.CompatibilityMode
+                ? "兼容模式（IE7 内核）"
+                : "IE" + BrowserFeatureControl.IeMajorVersion + " 内核";
 
             _toolbar = new ToolbarPanel();
             _toolbar.Dock = DockStyle.Fill;
@@ -260,7 +271,7 @@ namespace IEBrowser
 
             ActivateTab(_tabs.Count - 1);
 
-            tab.Navigate(string.IsNullOrEmpty(url) ? _homeUrl : url);
+            NavigateTab(tab, string.IsNullOrEmpty(url) ? _homeUrl : url);
         }
 
         private void AttachTab(BrowserTab tab)
@@ -488,8 +499,68 @@ namespace IEBrowser
             BrowserTab tab = ActiveTab;
             if (tab == null) return;
 
-            tab.Navigate(url);
+            NavigateTab(tab, url);
             FocusBrowser();
+        }
+
+        /// <summary>
+        /// 所有导航的统一入口：命中危险旧版 ActiveX 的页面不交给内置 WebBrowser 渲染，
+        /// 改为在独立的 32 位 iexplore.exe 中打开，避免控件本机崩溃拖垮本程序。
+        /// </summary>
+        private void NavigateTab(BrowserTab tab, string url)
+        {
+            if (tab == null || string.IsNullOrEmpty(url)) return;
+
+            if (ActiveXPolicy.AutoIsolateActiveX)
+            {
+                string html = ActiveXIsolation.TryFetchHtml(url);
+                if (ActiveXIsolation.HtmlContainsDangerousActiveX(html))
+                {
+                    string error;
+                    if (ActiveXIsolation.OpenInIsolatedIe(url, out error))
+                    {
+                        SetStatus("该页面含旧版 ActiveX 控件，已在独立 IE 中打开（进程隔离）");
+                        tab.Navigate(BuildIsolationPage(url));
+                        return;
+                    }
+
+                    SetStatus("隔离打开失败：" + error);
+                }
+            }
+
+            tab.Navigate(url);
+        }
+
+        /// <summary>
+        /// 生成一个本地提示页，替代内嵌渲染该危险页面，告诉用户已外移。
+        /// </summary>
+        private static string BuildIsolationPage(string url)
+        {
+            string path = Path.Combine(
+                Path.GetTempPath(), "iebrowser-isolated.html");
+
+            string html =
+                "<!DOCTYPE html><html><head><meta charset=\"utf-8\">" +
+                "<style>body{font-family:'Microsoft YaHei UI',sans-serif;padding:48px;" +
+                "color:#333;background:#fafafa}h2{color:#444}" +
+                "a{color:#0a66c2}code{background:#eee;padding:2px 6px;border-radius:3px}</style>" +
+                "</head><body><h2>此页面已在独立 IE 窗口中打开</h2>" +
+                "<p>该页面包含旧版 ActiveX 控件（griectl / Cognos ReportViewer），" +
+                "为避免控件崩溃影响浏览器本体，已改用独立的 32 位 IE 进程加载。</p>" +
+                "<p>页面地址：<br><code>" + System.Security.SecurityElement.Escape(url) + "</code></p>" +
+                "<p>若独立窗口未出现，可 <a href=\"" +
+                System.Security.SecurityElement.Escape(url) + "\">在此点击重新打开</a>。</p>" +
+                "</body></html>";
+
+            try
+            {
+                File.WriteAllText(path, html, System.Text.Encoding.UTF8);
+                return new Uri(path).AbsoluteUri;
+            }
+            catch
+            {
+                return "about:blank";
+            }
         }
 
         private static string ResolveInput(string input)
@@ -661,7 +732,7 @@ namespace IEBrowser
         private void OnHomeClick(object sender, EventArgs e)
         {
             BrowserTab tab = ActiveTab;
-            if (tab != null) tab.Navigate(_homeUrl);
+            if (tab != null) NavigateTab(tab, _homeUrl);
         }
 
         private void OnStarClick(object sender, EventArgs e)
@@ -725,7 +796,7 @@ namespace IEBrowser
             menu.Items.Add("打开主页", null, delegate
             {
                 BrowserTab tab = ActiveTab;
-                if (tab != null) tab.Navigate(_homeUrl);
+                if (tab != null) NavigateTab(tab, _homeUrl);
             });
 
             var refreshItem = new ToolStripMenuItem("刷新");
@@ -737,28 +808,94 @@ namespace IEBrowser
 
             var activeXMenu = new ToolStripMenuItem("ActiveX 控件");
 
-            var allowActiveX = new ToolStripMenuItem("允许 ActiveX 控件");
-            allowActiveX.Checked = ActiveXPolicy.AllowActiveX;
-            allowActiveX.Click += delegate { ToggleActiveXOption(ActiveXOption.ActiveX); };
+            var allowActiveX = new ToolStripMenuItem();
+            Action refreshAllowText = delegate
+            {
+                allowActiveX.Text = (ActiveXPolicy.AllowActiveX ? "✓ " : "○ ") + "允许 ActiveX 控件";
+            };
+            refreshAllowText();
+            allowActiveX.Click += delegate
+            {
+                ToggleActiveXOption(ActiveXOption.ActiveX);
+                refreshAllowText();
+            };
             activeXMenu.DropDownItems.Add(allowActiveX);
 
             var scopeHint = new ToolStripMenuItem("含未签名、未标记安全的内部控件");
             scopeHint.Enabled = false;
             activeXMenu.DropDownItems.Add(scopeHint);
 
-            activeXMenu.DropDownItems.Add(new ToolStripSeparator());
-
-            var internetZone = new ToolStripMenuItem("在 Internet 区域也放行（高风险）");
-            internetZone.Checked = ActiveXPolicy.AllowOnInternet;
-            internetZone.Click += delegate { ToggleActiveXOption(ActiveXOption.Internet); };
+            var internetZone = new ToolStripMenuItem();
+            Action refreshInternetText = delegate
+            {
+                internetZone.Text = (ActiveXPolicy.AllowOnInternet ? "✓ " : "○ ") +
+                    "在 Internet 区域也放行（高风险）";
+            };
+            refreshInternetText();
+            internetZone.Click += delegate
+            {
+                ToggleActiveXOption(ActiveXOption.Internet);
+                refreshInternetText();
+            };
             activeXMenu.DropDownItems.Add(internetZone);
-
-            var zoneHint = new ToolStripMenuItem("默认仅对本机（file://）与内网页面生效");
-            zoneHint.Enabled = false;
-            activeXMenu.DropDownItems.Add(zoneHint);
 
             menu.Items.Add(activeXMenu);
 
+            menu.Items.Add(new ToolStripSeparator());
+
+            // 一级菜单：旧版控件兼容模式（最容易出问题的选项放在最外层）。
+            // 注意：ContextMenuStrip 设置 ShowImageMargin=false 后不渲染 Checked 勾选，
+            // 因此这里用文本前缀“✓ / ○”自绘状态，保证用户能看见是否已开启。
+            var compatItem = new ToolStripMenuItem();
+            Action refreshCompatText = delegate
+            {
+                compatItem.Text = (ActiveXPolicy.CompatibilityMode ? "✓ " : "○ ") +
+                    "旧版控件兼容模式（IE7 内核，需重启）";
+            };
+            refreshCompatText();
+            compatItem.Click += delegate
+            {
+                ActiveXPolicy.CompatibilityMode = !ActiveXPolicy.CompatibilityMode;
+                SaveSettings();
+                refreshCompatText();
+                SetStatus("兼容模式已" +
+                    (ActiveXPolicy.CompatibilityMode ? "开启" : "关闭") + "，重启程序后生效");
+            };
+            menu.Items.Add(compatItem);
+
+            var compatHint = new ToolStripMenuItem("针对 griectl 等老控件的窗口回调崩溃");
+            compatHint.Enabled = false;
+            menu.Items.Add(compatHint);
+
+            menu.Items.Add(new ToolStripSeparator());
+
+            // 一级菜单：进程隔离（保底方案）
+            var isolateItem = new ToolStripMenuItem("在系统 IE 中打开当前页（进程隔离）");
+            isolateItem.Click += delegate { OpenInIsolatedIE(); };
+            menu.Items.Add(isolateItem);
+
+            var autoIsolateItem = new ToolStripMenuItem();
+            Action refreshAutoIsolateText = delegate
+            {
+                autoIsolateItem.Text = (ActiveXPolicy.AutoIsolateActiveX ? "✓ " : "○ ") +
+                    "自动隔离含旧版 ActiveX 的页面";
+            };
+            refreshAutoIsolateText();
+            autoIsolateItem.Click += delegate
+            {
+                ActiveXPolicy.AutoIsolateActiveX = !ActiveXPolicy.AutoIsolateActiveX;
+                SaveSettings();
+                refreshAutoIsolateText();
+                SetStatus("自动隔离已" + (ActiveXPolicy.AutoIsolateActiveX ? "开启" : "关闭") +
+                    "，下次导航生效");
+            };
+            menu.Items.Add(autoIsolateItem);
+
+            var isolateHint = new ToolStripMenuItem("崩溃只影响独立 IE 进程，不影响本程序");
+            isolateHint.Enabled = false;
+            menu.Items.Add(isolateHint);
+
+            menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add("Internet 选项…", null, delegate { OpenInternetOptions(); });
 
             menu.Items.Add(new ToolStripSeparator());
@@ -813,6 +950,32 @@ namespace IEBrowser
             }
         }
 
+        /// <summary>
+        /// 在独立的 iexplore.exe 进程中打开当前页面。
+        /// 第三方 ActiveX 的本机崩溃（c000041d/c0000005）只会终止该进程，
+        /// 不再波及本程序。旧版 OCX 在真正的 IE 宿主中兼容性最佳。
+        /// </summary>
+        private void OpenInIsolatedIE()
+        {
+            BrowserTab tab = ActiveTab;
+            if (tab == null || string.IsNullOrEmpty(tab.Url)) return;
+            if (tab.Url.StartsWith("about:", StringComparison.OrdinalIgnoreCase))
+            {
+                SetStatus("当前页面无需隔离");
+                return;
+            }
+
+            string error;
+            if (ActiveXIsolation.OpenInIsolatedIe(tab.Url, out error))
+            {
+                SetStatus("已在独立 IE 进程中打开");
+            }
+            else
+            {
+                SetStatus("无法启动系统 IE：" + error);
+            }
+        }
+
         private void SaveSettings()
         {
             try
@@ -821,6 +984,8 @@ namespace IEBrowser
 
                 _settings.AllowActiveX = ActiveXPolicy.AllowActiveX;
                 _settings.AllowOnInternet = ActiveXPolicy.AllowOnInternet;
+                _settings.CompatibilityMode = ActiveXPolicy.CompatibilityMode;
+                _settings.AutoIsolateActiveX = ActiveXPolicy.AutoIsolateActiveX;
                 _settings.Save(bounds, WindowState == FormWindowState.Maximized);
             }
             catch
