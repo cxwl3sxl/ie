@@ -4,7 +4,6 @@ using System.Drawing;
 using System.IO;
 using System.Reflection;
 using System.Windows.Forms;
-
 namespace IEBrowser
 {
     internal enum GlyphIcon
@@ -80,61 +79,28 @@ namespace IEBrowser
         }
 
         /// <summary>
-        /// 定位图像目录：优先 exe 同目录的 images\，其次源码 images\（便于开发调试）。
+        /// 从程序集内嵌资源加载 PNG 图像（资源名 IEBrowser.img.&lt;文件名&gt;）。
         /// </summary>
-        private static string ImageDir
-        {
-            get
-            {
-                if (!_imageDirProbed)
-                {
-                    _imageDirProbed = true;
-                    try
-                    {
-                        string exeDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
-                        if (!string.IsNullOrEmpty(exeDir))
-                        {
-                            string candidate = Path.Combine(exeDir, "images");
-                            if (Directory.Exists(candidate)) _imageDir = candidate;
-                        }
-                        if (_imageDir == null)
-                        {
-                            // 开发调试回退：源码同级 images 目录
-                            string candidate2 = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "images");
-                            if (Directory.Exists(candidate2)) _imageDir = candidate2;
-                        }
-                    }
-                    catch { }
-                }
-                return _imageDir;
-            }
-        }
-
         private static Image LoadIconImage(GlyphIcon icon, bool disabled)
         {
-            string dir = ImageDir;
-            if (string.IsNullOrEmpty(dir)) return null;
-
             string name;
             if (disabled && DisabledFileNames.TryGetValue(icon, out name)) { }
             else if (!IconFileNames.TryGetValue(icon, out name)) return null;
 
-            string path = Path.Combine(dir, name + ".png");
+            string resource = "IEBrowser.img." + name;
             Image img;
             lock (_imageCache)
             {
-                if (_imageCache.TryGetValue(path, out img)) return img;
+                if (_imageCache.TryGetValue(resource, out img)) return img;
             }
             try
             {
-                if (File.Exists(path))
+                Stream stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(resource);
+                if (stream != null)
                 {
-                    // 从文件加载独立副本，避免文件句柄长期占用
-                    using (var tmp = new Bitmap(path))
-                    {
-                        img = new Bitmap(tmp);
-                    }
-                    lock (_imageCache) _imageCache[path] = img;
+                    img = new Bitmap(stream);
+                    stream.Dispose();
+                    lock (_imageCache) _imageCache[resource] = img;
                     return img;
                 }
             }
